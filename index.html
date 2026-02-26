@@ -1,0 +1,1667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Go Coverage Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:         #0d1117;
+  --bg2:        #161b22;
+  --bg3:        #1c2128;
+  --bg4:        #21262d;
+  --border:     #30363d;
+  --border2:    #3d444d;
+  --text:       #e6edf3;
+  --text2:      #8b949e;
+  --text3:      #6e7681;
+  --accent:     #58a6ff;
+  --accent-dim: rgba(88,166,255,.15);
+  --green:      #3fb950;
+  --green-bg:   rgba(63,185,80,.13);
+  --yellow:     #d29922;
+  --yellow-bg:  rgba(210,153,34,.13);
+  --red:        #f85149;
+  --red-bg:     rgba(248,81,73,.13);
+  --purple:     #bc8cff;
+  --purple-bg:  rgba(188,140,255,.13);
+  --sidebar-w:  280px;
+  --header-h:   52px;
+}
+html, body { height: 100%; overflow: hidden; font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.6; }
+
+/* ─── LOADING SCREEN ─── */
+#loading-screen {
+  position: fixed; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; background: var(--bg); z-index: 300; gap: 16px;
+}
+#loading-screen.hidden { display: none; }
+.loading-logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; }
+.loading-logo svg { color: var(--accent); }
+.loading-spinner {
+  width: 32px; height: 32px; border: 3px solid var(--border);
+  border-top-color: var(--accent); border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-msg { font-size: 13px; color: var(--text2); }
+
+/* ─── DROP SCREEN ─── */
+#drop-screen {
+  position: fixed; inset: 0; display: none; flex-direction: column;
+  align-items: center; justify-content: center; background: var(--bg); z-index: 200; gap: 0;
+}
+#drop-screen.show { display: flex; }
+.drop-logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; margin-bottom: 32px; }
+.drop-logo svg { color: var(--accent); }
+.drop-zone {
+  width: 500px; max-width: 92vw; border: 2px dashed var(--border2); border-radius: 16px;
+  padding: 52px 36px; text-align: center; cursor: pointer;
+  transition: border-color .2s, background .2s; background: var(--bg2); position: relative;
+}
+.drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); background: var(--accent-dim); }
+.drop-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+.drop-icon { color: var(--accent); margin-bottom: 16px; }
+.drop-title { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+.drop-sub { font-size: 13px; color: var(--text2); margin-bottom: 20px; }
+.drop-btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 22px; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 600; font-size: 14px; border: none; pointer-events: none; }
+.drop-tip {
+  margin-top: 18px; padding: 12px 16px; border-radius: 8px;
+  background: var(--bg3); border: 1px solid var(--border); font-size: 12px; color: var(--text2);
+  text-align: left; line-height: 1.7;
+}
+.drop-tip code { font-family: 'JetBrains Mono', monospace; color: var(--accent); background: var(--bg4); padding: 1px 5px; border-radius: 3px; }
+.drop-error { margin-top: 12px; padding: 10px 16px; border-radius: 8px; background: var(--red-bg); color: var(--red); font-size: 13px; display: none; }
+.drop-error.show { display: block; }
+
+/* ─── APP ─── */
+#app { display: none; height: 100%; flex-direction: column; }
+#app.visible { display: flex; }
+
+/* ─── HEADER ─── */
+.header {
+  height: var(--header-h); flex-shrink: 0; background: var(--bg2);
+  border-bottom: 1px solid var(--border); display: flex; align-items: center;
+  padding: 0 16px; gap: 12px; z-index: 10;
+}
+.header-logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; flex-shrink: 0; }
+.header-logo svg { color: var(--accent); }
+.vsep { width: 1px; height: 24px; background: var(--border); flex-shrink: 0; }
+.hdr-fname { font-size: 12px; color: var(--text2); font-family: 'JetBrains Mono', monospace; flex-shrink: 0; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.dual-stat { display: flex; align-items: stretch; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); flex-shrink: 0; }
+.ds-half { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 4px 14px; gap: 1px; cursor: pointer; transition: background .15s; }
+.ds-half:hover { background: var(--bg3); }
+.ds-half.active { background: var(--accent-dim); }
+.ds-half + .ds-half { border-left: 1px solid var(--border); }
+.ds-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text3); }
+.ds-val { font-size: 15px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+.ds-sub { font-size: 10px; color: var(--text3); }
+
+.hdr-chips { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.chip { display: flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; border: 1px solid var(--border); background: var(--bg3); white-space: nowrap; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+.hdr-filters { display: flex; gap: 4px; margin-left: auto; flex-shrink: 0; }
+.flt { padding: 5px 11px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text2); cursor: pointer; font-size: 12px; font-family: inherit; font-weight: 500; transition: all .15s; }
+.flt:hover { border-color: var(--accent); color: var(--accent); }
+.flt.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.flt.flt-red { color: var(--red); border-color: var(--red); }
+.flt.flt-red.active { background: var(--red-bg); }
+.flt.flt-yel { color: var(--yellow); border-color: var(--yellow); }
+.flt.flt-yel.active { background: var(--yellow-bg); }
+.flt.flt-grn { color: var(--green); border-color: var(--green); }
+.flt.flt-grn.active { background: var(--green-bg); }
+.hdr-reset { margin-left: 4px; padding: 5px 11px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text3); cursor: pointer; font-size: 12px; font-family: inherit; transition: all .15s; flex-shrink: 0; }
+.hdr-reset:hover { border-color: var(--red); color: var(--red); }
+
+/* ─── LAYOUT ─── */
+.layout { display: flex; flex: 1; overflow: hidden; }
+
+/* ─── SIDEBAR ─── */
+.sidebar { width: var(--sidebar-w); flex-shrink: 0; border-right: 1px solid var(--border); display: flex; flex-direction: column; background: var(--bg2); overflow: hidden; }
+.sb-search { padding: 10px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.sw { position: relative; }
+.sw svg { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--text3); pointer-events: none; }
+.sb-input { width: 100%; background: var(--bg3); border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px 8px 28px; color: var(--text); font-size: 13px; font-family: inherit; outline: none; transition: border-color .15s; }
+.sb-input:focus { border-color: var(--accent); }
+.sb-input::placeholder { color: var(--text3); }
+.sb-mode { padding: 8px 12px; border-bottom: 1px solid var(--border); display: flex; gap: 6px; flex-shrink: 0; }
+.mode-btn { flex: 1; padding: 6px 4px; border-radius: 7px; border: 1px solid var(--border); background: transparent; color: var(--text3); cursor: pointer; font-size: 12px; font-family: inherit; font-weight: 500; transition: all .15s; text-align: center; }
+.mode-btn:hover { border-color: var(--border2); color: var(--text2); }
+.mode-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.mode-btn.mode-sonar.active { background: var(--purple-bg); border-color: var(--purple); color: var(--purple); }
+
+.tree { overflow-y: auto; flex: 1; padding: 6px 0; }
+/* Tree metric toggle */
+.tree-metric-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 10px 5px 12px; flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+.tree-metric-lbl { font-size: 11px; color: var(--text3); }
+.tree-metric-toggle {
+  display: flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+}
+.tmt-btn {
+  padding: 3px 9px; font-size: 11px; background: transparent; border: none;
+  color: var(--text3); cursor: pointer; font-family: inherit; font-weight: 500;
+  transition: background .12s, color .12s; white-space: nowrap;
+}
+.tmt-btn + .tmt-btn { border-left: 1px solid var(--border); }
+.tmt-btn.active { background: var(--accent-dim); color: var(--accent); }
+.tree::-webkit-scrollbar { width: 5px; }
+.tree::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+.t-row { display: flex; align-items: center; padding: 5px 8px 5px 0; margin: 1px 6px; border-radius: 6px; cursor: pointer; user-select: none; transition: background .1s; }
+.t-row:hover { background: var(--bg3); }
+.t-row.active { background: var(--accent-dim); }
+.t-row.active .t-label { color: var(--accent); }
+.t-row.excluded { opacity: .45; }
+.t-row.excluded .t-label { text-decoration: line-through; text-decoration-color: var(--text3); }
+.t-chevron { width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: var(--text3); transition: transform .15s; }
+.t-chevron.open { transform: rotate(90deg); }
+.t-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; margin-right: 4px; }
+.t-label { flex: 1; min-width: 0; font-size: 12px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: 'JetBrains Mono', monospace; }
+.t-excl-tag { font-size: 9px; color: var(--text3); background: var(--bg4); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; flex-shrink: 0; margin-right: 4px; }
+.t-pct { font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--text3); flex-shrink: 0; min-width: 36px; text-align: right; }
+.t-children { display: none; }
+.t-children.open { display: block; }
+
+/* ─── MAIN ─── */
+.main { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
+.main-head { padding: 16px 24px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg2); }
+.main-crumb { font-size: 11px; color: var(--text3); font-family: 'JetBrains Mono', monospace; margin-bottom: 6px; }
+.main-crumb span { color: var(--text2); }
+.title-row { display: flex; align-items: flex-start; gap: 12px; }
+.main-name { font-size: 16px; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+.main-meta { font-size: 12px; color: var(--text3); margin-top: 3px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.excl-banner { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 4px; background: var(--purple-bg); color: var(--purple); font-size: 11px; font-weight: 600; border: 1px solid var(--purple); }
+.main-pct { font-size: 24px; font-weight: 700; font-family: 'JetBrains Mono', monospace; margin-left: auto; flex-shrink: 0; }
+.ov-sort { display: flex; gap: 4px; margin-left: auto; flex-shrink: 0; }
+.ov-sort-btn { padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text3); cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 500; transition: all .15s; white-space: nowrap; }
+.ov-sort-btn:hover { border-color: var(--border2); color: var(--text2); }
+.ov-sort-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.bar-wrap { margin-top: 10px; height: 6px; border-radius: 3px; background: var(--bg4); overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 3px; transition: width .4s ease; }
+.main-body { flex: 1; min-height: 0; }
+.main-body::-webkit-scrollbar { width: 5px; }
+.main-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+/* ─── OVERVIEW ─── */
+.ov-wrap { padding: 16px 24px; }
+.ov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.pkg-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; cursor: pointer; transition: border-color .15s, background .15s; }
+.pkg-card:hover { border-color: var(--accent); background: var(--bg3); }
+.pkg-card.excl-card { opacity: .5; border-style: dashed; cursor: default; }
+.pkg-card.excl-card:hover { border-color: var(--border); background: var(--bg2); }
+.pc-name { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; color: var(--text2); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pc-meta { font-size: 11px; color: var(--text3); margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.pc-excl { font-size: 9px; color: var(--purple); background: var(--purple-bg); border: 1px solid var(--purple); border-radius: 3px; padding: 1px 5px; }
+.pc-bar { height: 4px; border-radius: 2px; background: var(--bg4); overflow: hidden; margin-bottom: 8px; }
+.pc-bar-fill { height: 100%; border-radius: 2px; }
+.pc-bottom { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
+.pc-pct { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 700; }
+.pc-gain { display: flex; align-items: center; gap: 3px; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; color: var(--green); opacity: .85; white-space: nowrap; padding-bottom: 2px; }
+.pc-gain.pc-gain-zero { color: var(--text3); font-weight: 400; }
+/* Weight badge — shown on cards and file table */
+.pc-weight {
+  display: flex; align-items: center; gap: 5px; margin-top: 7px;
+}
+.pc-weight-bar {
+  flex: 1; height: 5px; border-radius: 3px; background: var(--bg4); overflow: hidden;
+  position: relative;
+}
+.pc-weight-cov  { position: absolute; left: 0; top: 0; height: 100%; background: var(--green); }
+.pc-weight-uncov { position: absolute; top: 0; height: 100%; background: rgba(248,81,73,.45); }
+.pc-weight-lbl {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600;
+  color: var(--accent); white-space: nowrap; flex-shrink: 0;
+}
+/* pkg card — must be position:relative for the star button overlay */
+.pkg-card { position: relative; }
+.pkg-sel-btn {
+  position: absolute; top: 10px; right: 10px;
+  width: 24px; height: 24px; border-radius: 5px; border: none;
+  background: transparent; cursor: pointer; display: flex;
+  align-items: center; justify-content: center; color: var(--text3);
+  transition: all .15s; padding: 0; line-height: 1;
+}
+.pkg-sel-btn:hover { background: var(--bg4); color: var(--accent); }
+.pkg-sel-btn.starred { color: #e3b341; }
+.pkg-card.in-worklist { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-dim); }
+
+/* ─── WORK LIST SIDEBAR ─── */
+.wb-section {
+  border-top: 1px solid var(--border); flex-shrink: 0;
+  display: flex; flex-direction: column;
+  max-height: 42%; overflow: hidden;
+}
+.wb-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 12px; cursor: pointer; user-select: none; flex-shrink: 0;
+  transition: background .1s;
+}
+.wb-head:hover { background: var(--bg3); }
+.wb-title { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text2); }
+.wb-badge {
+  font-size: 10px; background: var(--accent); color: #fff;
+  border-radius: 10px; padding: 1px 7px; font-weight: 700; min-width: 18px; text-align: center;
+}
+.wb-badge.empty { background: var(--bg4); color: var(--text3); }
+.wb-chevron { color: var(--text3); transition: transform .15s; flex-shrink: 0; }
+.wb-chevron.open { transform: rotate(180deg); }
+.wb-body { overflow-y: auto; flex: 1; }
+.wb-body::-webkit-scrollbar { width: 4px; }
+.wb-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+.wb-empty { padding: 14px 12px; text-align: center; font-size: 12px; color: var(--text3); line-height: 1.6; }
+.wb-impact {
+  margin: 8px 10px 4px; padding: 10px 14px; border-radius: 8px;
+  background: rgba(63,185,80,.08); border: 1px solid rgba(63,185,80,.2);
+}
+.wb-impact-val { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 700; color: var(--green); }
+.wb-impact-lbl { font-size: 11px; color: var(--text3); margin-top: 1px; }
+.wb-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px; margin: 1px 6px; border-radius: 6px;
+  cursor: pointer; transition: background .1s;
+}
+.wb-item:hover { background: var(--bg3); }
+.wb-item-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.wb-item-name { flex: 1; min-width: 0; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wb-item-gain { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; color: var(--green); flex-shrink: 0; }
+.wb-item-rm {
+  width: 18px; height: 18px; display: flex; align-items: center; justify-content: center;
+  border-radius: 4px; color: var(--text3); font-size: 11px; flex-shrink: 0; transition: all .1s;
+  cursor: pointer;
+}
+.wb-item-rm:hover { background: var(--red-bg); color: var(--red); }
+.wb-clear {
+  display: block; margin: 6px 10px 10px; padding: 5px;
+  border-radius: 6px; border: 1px solid var(--border); background: transparent;
+  color: var(--text3); cursor: pointer; font-size: 11px; font-family: inherit;
+  width: calc(100% - 20px); text-align: center; transition: all .15s;
+}
+.wb-clear:hover { border-color: var(--red); color: var(--red); }
+
+/* ─── FILE TABLE ─── */
+.tbl-wrap { padding: 0 24px 24px; }
+.ftable { width: 100%; border-collapse: collapse; }
+.ftable th { text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 700; color: var(--text3); text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); cursor: pointer; user-select: none; white-space: nowrap; }
+.ftable th:hover { color: var(--text2); }
+.ftable th.asc::after  { content: ' ↑'; color: var(--accent); }
+.ftable th.desc::after { content: ' ↓'; color: var(--accent); }
+.ftable td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.ftable tr:last-child td { border-bottom: none; }
+.ftable tbody tr { cursor: pointer; transition: background .1s; }
+.ftable tbody tr:hover td { background: var(--bg2); }
+.ftable tbody tr.excl-row td { opacity: .5; }
+.f-name { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.f-excl { font-size: 9px; color: var(--purple); background: var(--purple-bg); border: 1px solid var(--purple); border-radius: 3px; padding: 1px 5px; }
+.f-path { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text3); margin-top: 2px; }
+.num { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text2); text-align: right; white-space: nowrap; }
+.cbar { display: flex; align-items: center; gap: 10px; min-width: 140px; }
+.cbar-track { flex: 1; height: 7px; border-radius: 4px; background: var(--bg4); overflow: hidden; }
+.cbar-fill { height: 100%; border-radius: 4px; }
+.cbar-pct { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; min-width: 42px; text-align: right; }
+
+/* ─── DELTA CHIP ─── */
+.delta-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600;
+  color: var(--green); white-space: nowrap;
+}
+.delta-chip.delta-zero { color: var(--text3); font-weight: 400; }
+.delta-chip svg { opacity: .8; }
+/* In source-view header — larger */
+.src-delta {
+  display: flex; align-items: center; gap: 6px; padding: 5px 12px;
+  border-radius: 7px; border: 1px solid rgba(63,185,80,.3);
+  background: rgba(63,185,80,.07); white-space: nowrap; flex-shrink: 0;
+}
+.src-delta-val { font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 700; color: var(--green); }
+.src-delta-lbl { font-size: 11px; color: var(--text3); line-height: 1.3; }
+.src-delta.fully-covered { border-color: rgba(63,185,80,.2); background: rgba(63,185,80,.04); }
+.src-delta.fully-covered .src-delta-val { color: var(--green); }
+
+/* ─── SOURCE PANEL (right-side block list) ─── */
+.main-body { display: flex; overflow: hidden; }
+.main-body.src-layout #main-content { border-right: 1px solid var(--border); }
+#main-content { flex: 1; overflow-y: auto; overflow-x: auto; min-width: 0; }
+.src-panel {
+  width: 220px; flex-shrink: 0; overflow-y: auto; overflow-x: hidden;
+  background: var(--bg2); display: flex; flex-direction: column;
+}
+.src-panel::-webkit-scrollbar { width: 4px; }
+.src-panel::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+.sp-section {
+  border-bottom: 1px solid var(--border);
+}
+.sp-section-hd {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 12px 8px; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em;
+  user-select: none; position: sticky; top: 0; background: var(--bg2); z-index: 1;
+}
+.sp-section-hd.collapsible { cursor: pointer; }
+.sp-section-hd.collapsible:hover { background: var(--bg3); }
+.sp-count {
+  margin-left: auto; font-size: 10px; font-weight: 500; font-family: 'JetBrains Mono', monospace;
+  color: var(--text3); letter-spacing: 0; text-transform: none; white-space: nowrap;
+}
+.sp-chevron { margin-left: 4px; transition: transform .15s; flex-shrink: 0; }
+.sp-chevron.open { transform: rotate(180deg); }
+.sp-block {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 12px; cursor: pointer; gap: 8px;
+  font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  transition: background .1s; border-radius: 0;
+}
+.sp-block:hover { background: var(--bg3); }
+.sp-uncov { color: var(--red); }
+.sp-uncov:hover { background: var(--red-bg); }
+.sp-cov   { color: var(--green); }
+.sp-cov:hover { background: var(--green-bg); }
+.sp-range { font-weight: 500; }
+.sp-stmts { font-size: 10px; color: var(--text3); flex-shrink: 0; }
+.sp-all-cov {
+  padding: 14px 12px; font-size: 12px; color: var(--text3);
+  text-align: center; font-style: italic;
+}
+
+/* ─── SOURCE VIEW ─── */
+.src-head-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.src-head-row + .src-head-row { margin-top: 10px; }
+.back-btn {
+  display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px;
+  border-radius: 6px; border: 1px solid var(--border); background: var(--bg3);
+  color: var(--text2); cursor: pointer; font-size: 13px; font-family: inherit;
+  font-weight: 500; transition: all .15s; flex-shrink: 0; white-space: nowrap;
+}
+.back-btn:hover { border-color: var(--accent); color: var(--accent); }
+.src-file-name { font-family: 'JetBrains Mono', monospace; font-size: 15px; font-weight: 600; }
+.src-file-path { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text3); margin-top: 1px; }
+.src-pct { font-family: 'JetBrains Mono', monospace; font-size: 22px; font-weight: 700; margin-left: auto; flex-shrink: 0; }
+.src-stmts { font-size: 12px; color: var(--text3); white-space: nowrap; flex-shrink: 0; }
+.src-leg { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.src-leg-item { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text2); }
+.src-leg-dot { width: 11px; height: 11px; border-radius: 2px; flex-shrink: 0; }
+.src-jump { display: flex; gap: 6px; margin-left: auto; }
+.jump-btn {
+  padding: 5px 11px; border-radius: 6px; border: 1px solid var(--border);
+  background: transparent; color: var(--text2); cursor: pointer; font-size: 12px;
+  font-family: inherit; font-weight: 500; transition: all .15s;
+}
+.jump-btn:hover { border-color: var(--accent); color: var(--accent); }
+.jump-btn:disabled { opacity: .35; cursor: default; pointer-events: none; }
+
+/* Source code body */
+.src-code-wrap {
+  font-family: 'JetBrains Mono', monospace; font-size: 13px;
+  line-height: 1; /* line height controlled per-row */
+}
+.src-line { display: flex; min-height: 21px; }
+.src-line:hover { filter: brightness(1.18); }
+.src-covered   { background: rgba(63,185,80,.10); }
+.src-uncovered { background: rgba(248,81,73,.13); }
+/* .src-none — no extra background */
+
+.src-gutter {
+  min-width: 52px; text-align: right; padding: 2px 12px 2px 8px;
+  color: var(--text3); font-size: 12px; line-height: 17px;
+  user-select: none; border-right: 1px solid var(--border);
+  flex-shrink: 0; font-family: 'JetBrains Mono', monospace;
+}
+.src-covered   .src-gutter { color: rgba(63,185,80,.65);  border-right-color: rgba(63,185,80,.2); }
+.src-uncovered .src-gutter { color: rgba(248,81,73,.75);  border-right-color: rgba(248,81,73,.25); }
+
+.src-content {
+  padding: 2px 20px; color: var(--text); white-space: pre;
+  tab-size: 4; flex: 1; font-size: 13px; line-height: 17px;
+}
+.src-unavail {
+  padding: 48px 32px; text-align: center; color: var(--text3);
+}
+.src-unavail h3 { font-size: 15px; color: var(--text2); margin-bottom: 6px; }
+.src-unavail p  { font-size: 13px; line-height: 1.7; }
+.src-unavail code { font-family: 'JetBrains Mono', monospace; color: var(--accent); }
+
+/* ─── EMPTY ─── */
+.empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px; color: var(--text3); text-align: center; }
+.empty svg { margin-bottom: 16px; opacity: .3; }
+.empty h3 { font-size: 16px; color: var(--text2); margin-bottom: 6px; font-weight: 600; }
+.empty p { font-size: 13px; }
+.fade { animation: fade .2s ease; }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+/* ─── REPO PATH CONFIG ─── */
+.hdr-cfg-btn {
+  display: flex; align-items: center; gap: 5px; padding: 5px 10px;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text2); font-size: 12px; cursor: pointer; white-space: nowrap;
+  transition: border-color .15s, color .15s; font-family: inherit;
+}
+.hdr-cfg-btn:hover { border-color: var(--border2); color: var(--text); }
+.hdr-cfg-btn.configured { border-color: var(--accent); color: var(--accent); }
+.repo-cfg-modal {
+  display: none; position: fixed; inset: 0; z-index: 200;
+  align-items: flex-start; justify-content: flex-end; padding: 70px 20px 0;
+}
+.repo-cfg-modal.open { display: flex; }
+.repo-cfg-backdrop { position: fixed; inset: 0; }
+.repo-cfg-box {
+  position: relative; background: var(--bg2); border: 1px solid var(--border2);
+  border-radius: 10px; padding: 18px 20px; width: 380px; box-shadow: 0 8px 32px rgba(0,0,0,.5);
+}
+.repo-cfg-box h4 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.repo-cfg-box p  { font-size: 12px; color: var(--text2); margin-bottom: 14px; line-height: 1.6; }
+.repo-cfg-box label { font-size: 12px; color: var(--text2); display: block; margin-bottom: 5px; }
+.repo-cfg-row { display: flex; gap: 8px; }
+.repo-cfg-row input {
+  flex: 1; background: var(--bg3); border: 1px solid var(--border2); border-radius: 6px;
+  color: var(--text); font-size: 13px; padding: 7px 10px; font-family: 'JetBrains Mono', monospace;
+  outline: none;
+}
+.repo-cfg-row input:focus { border-color: var(--accent); }
+.repo-cfg-row button {
+  padding: 7px 14px; background: var(--accent); border: none; border-radius: 6px;
+  color: #000; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+}
+.repo-cfg-row button:hover { opacity: .88; }
+.repo-cfg-hint { font-size: 11px; color: var(--text3); margin-top: 10px; line-height: 1.6; }
+.repo-cfg-hint code { color: var(--accent); font-family: 'JetBrains Mono', monospace; }
+/* Inline retry form inside src-unavail */
+.src-retry-form { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); }
+.src-retry-form label { font-size: 12px; color: var(--text2); display: block; margin-bottom: 6px; }
+.src-retry-row { display: flex; gap: 8px; }
+.src-retry-row input {
+  flex: 1; background: var(--bg3); border: 1px solid var(--border2); border-radius: 6px;
+  color: var(--text); font-size: 13px; padding: 7px 10px; font-family: 'JetBrains Mono', monospace;
+  outline: none; min-width: 0;
+}
+.src-retry-row input:focus { border-color: var(--accent); }
+.src-retry-row button {
+  padding: 7px 14px; background: var(--accent); border: none; border-radius: 6px;
+  color: #000; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+</style>
+</head>
+<body>
+
+<!-- LOADING -->
+<div id="loading-screen">
+  <div class="loading-logo">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+    Go Coverage Viewer
+  </div>
+  <div class="loading-spinner"></div>
+  <div class="loading-msg" id="loading-msg">Looking for coverage-output/sonarqube.cov…</div>
+</div>
+
+<!-- DROP SCREEN (fallback) -->
+<div id="drop-screen">
+  <div class="drop-logo">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+    Go Coverage Viewer
+  </div>
+  <div class="drop-zone" id="drop-zone">
+    <input type="file" id="file-input" accept=".cov,.out,text/plain">
+    <div class="drop-icon">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+    </div>
+    <div class="drop-title">Drop your .cov file here</div>
+    <div class="drop-sub">Supports <code>mode: set / count / atomic</code> format</div>
+    <div class="drop-btn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      Browse file
+    </div>
+    <div class="drop-tip">
+      <strong>Drop .cov file</strong> for stats + coverage view (works from file://).<br><br>
+      <strong>💡 For source line highlighting</strong> — either:<br>
+      &nbsp;&nbsp;• Run <code>./open-coverage.sh</code> (embeds everything, no server)<br>
+      &nbsp;&nbsp;• Or: <code>python3 -m http.server 8080</code> from repo root, open <code>http://localhost:8080/index.html</code>
+    </div>
+  </div>
+  <div class="drop-error" id="drop-error"></div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <header class="header">
+    <div class="header-logo">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      Coverage
+    </div>
+    <div class="vsep"></div>
+    <div class="hdr-fname" id="hdr-fname">—</div>
+    <div class="vsep"></div>
+    <div class="dual-stat">
+      <div class="ds-half active" id="ds-all" onclick="setViewMode('all')">
+        <div class="ds-lbl">All</div>
+        <div class="ds-val" id="ds-all-pct">—</div>
+        <div class="ds-sub" id="ds-all-sub">—</div>
+      </div>
+      <div class="ds-half" id="ds-sonar" onclick="setViewMode('sonar')">
+        <div class="ds-lbl">Sonar</div>
+        <div class="ds-val" id="ds-sonar-pct">—</div>
+        <div class="ds-sub" id="ds-sonar-sub">—</div>
+      </div>
+    </div>
+    <div class="vsep"></div>
+    <div class="hdr-chips">
+      <div class="chip"><div class="dot" style="background:var(--accent)"></div><span id="hdr-pkgs">—</span></div>
+      <div class="chip"><div class="dot" style="background:var(--text3)"></div><span id="hdr-files">—</span></div>
+    </div>
+    <div class="hdr-filters">
+      <button class="flt active"    onclick="setFilter('all',this)">All</button>
+      <button class="flt flt-red"   onclick="setFilter('red',this)">&lt;50%</button>
+      <button class="flt flt-yel"   onclick="setFilter('yellow',this)">50–79%</button>
+      <button class="flt flt-grn"   onclick="setFilter('green',this)">≥80%</button>
+    </div>
+    <button class="hdr-cfg-btn" id="hdr-cfg-btn" onclick="toggleRepoCfg()" title="Set the base URL/path where source files are served from">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2"/></svg>
+      Repo path
+    </button>
+    <button class="hdr-reset" onclick="resetApp()">↩ New file</button>
+  </header>
+
+  <!-- Repo path config modal -->
+  <div class="repo-cfg-modal" id="repo-cfg-modal">
+    <div class="repo-cfg-backdrop" onclick="toggleRepoCfg()"></div>
+    <div class="repo-cfg-box">
+      <h4>Source file base path</h4>
+      <p>Where are the repo files served from? This is the URL prefix prepended to every file path when loading source code.</p>
+      <label>Base URL</label>
+      <div class="repo-cfg-row">
+        <input id="repo-cfg-input" type="text" placeholder="e.g.  ./  or  http://localhost:8080/" />
+        <button onclick="saveRepoCfg()">Save</button>
+      </div>
+      <div class="repo-cfg-hint">
+        Default <code>./</code> works when you run:<br>
+        <code>python3 -m http.server 8080</code> from the repo root,<br>
+        then open <code>http://localhost:8080/coverage.html</code>
+      </div>
+    </div>
+  </div>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sb-search">
+        <div class="sw">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input class="sb-input" id="search" type="text" placeholder="Search packages…" oninput="onSearch(this.value)">
+        </div>
+      </div>
+      <div class="sb-mode">
+        <button class="mode-btn active"      id="sb-mode-all"   onclick="setViewMode('all')">All files</button>
+        <button class="mode-btn mode-sonar"  id="sb-mode-sonar" onclick="setViewMode('sonar')">SonarQube only</button>
+      </div>
+      <div class="tree-metric-bar">
+        <span class="tree-metric-lbl">Show</span>
+        <div class="tree-metric-toggle">
+          <button class="tmt-btn active" id="tmt-cov"    onclick="setTreeMetric('cov')">Coverage</button>
+          <button class="tmt-btn"        id="tmt-contrib" onclick="setTreeMetric('contrib')">Score ↑</button>
+          <button class="tmt-btn"        id="tmt-weight"  onclick="setTreeMetric('weight')">Weight</button>
+        </div>
+      </div>
+      <div class="tree" id="tree"></div>
+
+      <!-- Work List -->
+      <div class="wb-section" id="wb-section">
+        <div class="wb-head" onclick="toggleWbOpen()">
+          <span class="wb-title">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="#e3b341" stroke="#e3b341" stroke-width="1.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            Work List
+            <span class="wb-badge empty" id="wb-badge">0</span>
+          </span>
+          <svg class="wb-chevron open" id="wb-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+        </div>
+        <div class="wb-body" id="wb-body">
+          <div class="wb-empty">★ Star packages on the<br>overview to track them here</div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="main-head" id="main-head">
+        <div class="empty" style="padding:14px 0">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+          <h3>Select a package</h3>
+          <p>Click any package in the tree to see file-level coverage</p>
+        </div>
+      </div>
+      <div class="main-body" id="main-body">
+        <div id="main-content"></div>
+        <!-- src-panel injected here by openSourceView, removed by backToPackage -->
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+//  SONARQUBE EXCLUSION PATTERNS  (from .github/workflows/CI.yml)
+// ─────────────────────────────────────────────────────────────
+const SONAR_EXCLUSIONS = [
+  'scripts/**','bin/**','bootstrap/**','core/bootstrap/**','core/controller/**',
+  'build/**','configs/**','deployments/**','**/constants/**','migration/**',
+  'test/**','**/*_test.go','core/contracts/**','worker/bootstrap/**',
+  'worker/handler/**','worker/health/**','pkg/**','e2e/**','slit/**'
+];
+
+function globMatch(pat, fp) {
+  if (pat.startsWith('**/')) {
+    const rest = pat.slice(3);
+    const parts = fp.split('/');
+    for (let i = 0; i < parts.length; i++)
+      if (simpleGlob(rest, parts.slice(i).join('/'))) return true;
+    return false;
+  }
+  if (pat.endsWith('/**')) {
+    const pre = pat.slice(0,-3);
+    return fp === pre || fp.startsWith(pre + '/');
+  }
+  return simpleGlob(pat, fp);
+}
+function simpleGlob(pat, str) {
+  const re = '^' + pat.replace(/[.+^${}()|[\]\\]/g,'\\$&').replace(/\*\*/g,'§').replace(/\*/g,'[^/]*').replace(/§/g,'.*') + '$';
+  return new RegExp(re).test(str);
+}
+function isSonarExcluded(fp) { return SONAR_EXCLUSIONS.some(p => globMatch(p, fp)); }
+
+// ─────────────────────────────────────────────────────────────
+//  STATE
+// ─────────────────────────────────────────────────────────────
+let packages     = [];
+let selectedPkg  = null;
+let activeFile   = null;   // non-null means source view is open
+let filter       = 'all';
+let viewMode     = 'all';
+let search       = '';
+let openNodes    = new Set();
+let sortCol      = 'pct';
+let sortDir      = 'asc';
+let modulePrefix = '';
+
+// Global totals used for Δ% calculations (set in initApp)
+let gAllStmt = 0;  // total statements across ALL files
+let gAllCov  = 0;  // covered statements across ALL files
+let gSonStmt = 0;  // total statements in SonarQube-included files only
+let gSonCov  = 0;  // covered statements in SonarQube-included files only
+
+// Source-view jump state
+let _uncovLines = [];
+let _uncovIdx   = -1;
+
+// Overview sort: 'gain' (score impact desc) | 'pct' (coverage asc)
+let overviewSort = 'gain';
+
+// Tree metric mode: 'cov' = package-wise coverage %, 'contrib' = contribution to total
+let treeMetric = 'cov';
+
+// Base URL used when fetching source files. Stored in sessionStorage so it
+// survives page reloads within the same browser tab.
+const REPO_BASE_KEY = 'covRepoBase';
+let repoBasePath = sessionStorage.getItem(REPO_BASE_KEY) || './';
+
+// Work list state (persisted to localStorage)
+let workList = new Set();
+let wbOpen   = true;
+const WB_KEY = 'nbplus_cov_worklist';
+
+// ─────────────────────────────────────────────────────────────
+//  AUTO-LOAD + DRAG-DROP
+// ─────────────────────────────────────────────────────────────
+window.addEventListener('load', async () => {
+  // Path 1: data was injected by the CLI script (file:// mode, no server needed)
+  if (window.__INJECTED_COV__) {
+    document.getElementById('loading-msg').textContent = 'Parsing coverage data…';
+    const result = parseCov(window.__INJECTED_COV__);
+    if (result) { initApp(result.packages, result.module, window.__INJECTED_FNAME__ || 'sonarqube.cov'); return; }
+  }
+  // Path 2: server is running from repo root — try common .cov file locations
+  const candidatePaths = [
+    { url: './sonarqube.cov',                 label: 'sonarqube.cov' },
+  ];
+  for (const { url, label } of candidatePaths) {
+    try {
+      document.getElementById('loading-msg').textContent = `Looking for ${label}…`;
+      const resp = await fetch(url);
+      if (!resp.ok) continue;
+      const text = await resp.text();
+      document.getElementById('loading-msg').textContent = 'Parsing coverage data…';
+      const result = parseCov(text);
+      if (result) { initApp(result.packages, result.module, label); return; }
+    } catch (e) { /* try next */ }
+  }
+  document.getElementById('loading-screen').classList.add('hidden');
+  document.getElementById('drop-screen').classList.add('show');
+});
+
+const dropZone  = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+fileInput.addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
+dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => { hideError(); const r = parseCov(e.target.result); if (r) initApp(r.packages, r.module, file.name); };
+  reader.onerror = () => showError('Could not read file.');
+  reader.readAsText(file);
+}
+function showError(m) { const el = document.getElementById('drop-error'); el.textContent = '⚠ ' + m; el.classList.add('show'); }
+function hideError()  { document.getElementById('drop-error').classList.remove('show'); }
+
+// ─────────────────────────────────────────────────────────────
+//  PARSE
+// ─────────────────────────────────────────────────────────────
+function parseCov(text) {
+  const lines = text.split('\n');
+  if (!lines[0].trim().startsWith('mode:')) { showError('Not a valid Go coverage file.'); return null; }
+
+  // Deduplicate blocks (same file:range → max count)
+  const blocks = new Map();
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim(); if (!line) continue;
+    const parts = line.split(/\s+/); if (parts.length < 3) continue;
+    const loc = parts[0], stmts = +parts[1], count = +parts[2];
+    if (isNaN(stmts) || isNaN(count)) continue;
+    if (!blocks.has(loc)) blocks.set(loc, { stmts, count });
+    else blocks.get(loc).count = Math.max(blocks.get(loc).count, count);
+  }
+  if (!blocks.size) { showError('No coverage data found.'); return null; }
+
+  const allRaw = [...blocks.keys()].map(l => l.split(':')[0]);
+  const mod    = detectModule(allRaw);
+
+  // Per-file aggregation + block list
+  const fileMap = new Map();
+  for (const [loc, { stmts, count }] of blocks) {
+    const colIdx  = loc.lastIndexOf(':');
+    let fp        = loc.slice(0, colIdx);
+    const range   = loc.slice(colIdx + 1);
+    if (mod && fp.startsWith(mod + '/')) fp = fp.slice(mod.length + 1);
+    const [startStr, endStr] = range.split(',');
+    const startLine = parseInt(startStr);
+    const endLine   = parseInt(endStr);
+    if (!fileMap.has(fp)) fileMap.set(fp, { covered: 0, total: 0, blocks: [] });
+    const f = fileMap.get(fp);
+    f.total += stmts;
+    if (count > 0) f.covered += stmts;
+    if (stmts > 0) f.blocks.push({ startLine, endLine, stmts, covered: count > 0 });
+  }
+
+  // Per-package aggregation
+  const pkgMap = new Map();
+  for (const [fp, stat] of fileMap) {
+    const slash = fp.lastIndexOf('/');
+    const pkg   = slash >= 0 ? fp.slice(0, slash) : '(root)';
+    const fname = slash >= 0 ? fp.slice(slash + 1) : fp;
+    const pct   = stat.total > 0 ? +(stat.covered * 100 / stat.total).toFixed(1) : 0;
+    const excl  = isSonarExcluded(fp);
+    stat.blocks.sort((a,b) => a.startLine - b.startLine);
+    if (!pkgMap.has(pkg)) pkgMap.set(pkg, { covered: 0, total: 0, files: [], excluded: true });
+    const p = pkgMap.get(pkg);
+    p.covered += stat.covered; p.total += stat.total;
+    if (!excl) p.excluded = false;
+    p.files.push({ name: fname, path: fp, covered: stat.covered, total: stat.total, pct, excluded: excl, blocks: stat.blocks });
+  }
+
+  const result = [];
+  for (const [pkg, p] of [...pkgMap.entries()].sort((a,b) => a[0].localeCompare(b[0]))) {
+    p.pkg = pkg;
+    p.pct = p.total > 0 ? +(p.covered * 100 / p.total).toFixed(1) : 0;
+    p.files.sort((a,b) => a.pct - b.pct);
+    result.push(p);
+  }
+  return { packages: result, module: mod };
+}
+
+function detectModule(paths) {
+  if (!paths.length) return '';
+  let pre = paths[0];
+  for (const p of paths) { while (!p.startsWith(pre)) { const i = pre.lastIndexOf('/'); if (i <= 0) return ''; pre = pre.slice(0,i); } }
+  return pre.includes('/') ? pre : '';
+}
+
+// ─────────────────────────────────────────────────────────────
+//  INIT
+// ─────────────────────────────────────────────────────────────
+function initApp(pkgs, mod, fname) {
+  packages = pkgs; modulePrefix = mod; selectedPkg = null; activeFile = null;
+  filter = 'all'; viewMode = 'all'; search = ''; sortCol = 'pct'; sortDir = 'asc'; overviewSort = 'gain';
+  openNodes = new Set();   // start fully collapsed
+  treeMetric = 'cov';
+
+  const allCov  = pkgs.reduce((s,p) => s+p.covered, 0);
+  const allStmt = pkgs.reduce((s,p) => s+p.total,   0);
+  const sonPkgs = pkgs.map(p => { const fs=p.files.filter(f=>!f.excluded); return { cov: fs.reduce((s,f)=>s+f.covered,0), tot: fs.reduce((s,f)=>s+f.total,0) }; });
+  const sonCov  = sonPkgs.reduce((s,p) => s+p.cov, 0);
+  const sonStmt = sonPkgs.reduce((s,p) => s+p.tot, 0);
+  const allPct  = allStmt > 0 ? allCov*100/allStmt : 0;
+  const sonPct  = sonStmt > 0 ? sonCov*100/sonStmt : 0;
+
+  // Store globals for Δ% calculations
+  gAllStmt = allStmt; gAllCov = allCov;
+  gSonStmt = sonStmt; gSonCov = sonCov;
+
+  // Pre-compute per-file score impact: how much would overall coverage increase
+  // if every uncovered statement in this file were covered?
+  //   Δ% = uncovered_stmts_in_file / total_stmts_across_scope × 100
+  pkgs.forEach(p => p.files.forEach(f => {
+    const u     = f.total - f.covered;  // uncovered statements in this file
+    f.gainAll   = allStmt > 0 ? u / allStmt * 100 : 0;
+    f.gainSonar = (!f.excluded && sonStmt > 0) ? u / sonStmt * 100 : 0;
+  }));
+
+  document.getElementById('hdr-fname').textContent     = fname;
+  document.getElementById('ds-all-pct').textContent    = fmtPct(allPct);
+  document.getElementById('ds-all-pct').style.color    = covColor(allPct);
+  document.getElementById('ds-all-sub').textContent    = fmt(allStmt) + ' stmts';
+  document.getElementById('ds-sonar-pct').textContent  = fmtPct(sonPct);
+  document.getElementById('ds-sonar-sub').textContent  = fmt(sonStmt) + ' stmts';
+  document.getElementById('hdr-pkgs').textContent      = pkgs.length + ' pkgs';
+  document.getElementById('hdr-files').textContent     = fmt(pkgs.reduce((s,p)=>s+p.files.length,0)) + ' files';
+
+  document.querySelectorAll('.flt').forEach(b => b.classList.remove('active'));
+  document.querySelector('.flt[onclick="setFilter(\'all\',this)"]').classList.add('active');
+  document.getElementById('search').value = '';
+
+  document.getElementById('loading-screen').classList.add('hidden');
+  document.getElementById('drop-screen').classList.remove('show');
+  document.getElementById('app').classList.add('visible');
+  updateRepoCfgBtn();
+  // Sync tree metric toggle state
+  document.getElementById('tmt-cov').classList.add('active');
+  document.getElementById('tmt-contrib').classList.remove('active');
+  document.getElementById('tmt-weight').classList.remove('active');
+  loadWorkList();
+  renderTree(); renderOverview(); renderWorkList();
+}
+
+function resetApp() {
+  activeFile = null; selectedPkg = null;
+  document.getElementById('app').classList.remove('visible');
+  document.getElementById('drop-screen').classList.add('show');
+  document.getElementById('file-input').value = '';
+  hideError();
+}
+
+// ─────────────────────────────────────────────────────────────
+//  REPO PATH CONFIG
+// ─────────────────────────────────────────────────────────────
+function updateRepoCfgBtn() {
+  const btn = document.getElementById('hdr-cfg-btn');
+  if (!btn) return;
+  const isCustom = repoBasePath !== './';
+  btn.classList.toggle('configured', isCustom);
+  btn.title = isCustom
+    ? `Source base: ${repoBasePath} (click to change)`
+    : 'Set the base URL/path where source files are served from';
+}
+
+function toggleRepoCfg() {
+  const modal = document.getElementById('repo-cfg-modal');
+  const isOpen = modal.classList.contains('open');
+  if (!isOpen) {
+    document.getElementById('repo-cfg-input').value = repoBasePath;
+  }
+  modal.classList.toggle('open', !isOpen);
+}
+
+function saveRepoCfg() {
+  const val = document.getElementById('repo-cfg-input').value.trim();
+  if (!val) return;
+  repoBasePath = val.endsWith('/') ? val : val + '/';
+  sessionStorage.setItem(REPO_BASE_KEY, repoBasePath);
+  updateRepoCfgBtn();
+  toggleRepoCfg();
+}
+
+// Called from the inline retry form inside renderSourceUnavailable
+function retryWithBase(filePath) {
+  const val = document.getElementById('src-retry-input').value.trim();
+  if (!val) return;
+  repoBasePath = val.endsWith('/') ? val : val + '/';
+  sessionStorage.setItem(REPO_BASE_KEY, repoBasePath);
+  updateRepoCfgBtn();
+  if (filePath && selectedPkg) openSourceView(filePath, selectedPkg);
+}
+
+// ─────────────────────────────────────────────────────────────
+//  HELPERS
+// ─────────────────────────────────────────────────────────────
+function covColor(p) { return p >= 80 ? 'var(--green)' : p >= 50 ? 'var(--yellow)' : 'var(--red)'; }
+function fmt(n)   { return Number(n).toLocaleString(); }
+function fmtPct(p){ return (+p).toFixed(1)+'%'; }
+// Format a coverage gain delta. Always show at least 3 sig-figs so tiny gains are visible.
+function fmtDelta(d) {
+  if (d <= 0) return null;
+  if (d < 0.01)  return '+' + d.toFixed(4) + '%';
+  if (d < 0.1)   return '+' + d.toFixed(3) + '%';
+  if (d < 1)     return '+' + d.toFixed(2) + '%';
+  return '+' + d.toFixed(2) + '%';
+}
+// Return the gain relevant to the current viewMode
+function fileGain(f) {
+  return viewMode === 'sonar' ? f.gainSonar : f.gainAll;
+}
+// Package-level gain: sum of file gains (= pkg_uncovered / scope_total * 100)
+function pkgGain(p) {
+  if (viewMode === 'sonar')
+    return p.files.filter(f => !f.excluded).reduce((s, f) => s + f.gainSonar, 0);
+  return p.files.reduce((s, f) => s + f.gainAll, 0);
+}
+// How much of the total coverage score does this package currently contribute?
+// = pkg.covered / scope_total × 100
+function pkgContrib(p) {
+  const scope = viewMode === 'sonar' ? gSonStmt : gAllStmt;
+  const fs    = viewMode === 'sonar' ? p.files.filter(f => !f.excluded) : p.files;
+  const cov   = fs.reduce((s, f) => s + f.covered, 0);
+  return scope > 0 ? cov / scope * 100 : 0;
+}
+// Weight = pkg.total / scope_total × 100
+// This is the package's share of the 100% coverage ceiling — the maximum it can
+// ever contribute to overall coverage, regardless of current test state.
+function pkgWeight(p) {
+  const scope = viewMode === 'sonar' ? gSonStmt : gAllStmt;
+  const fs    = viewMode === 'sonar' ? p.files.filter(f => !f.excluded) : p.files;
+  const tot   = fs.reduce((s, f) => s + f.total, 0);
+  return scope > 0 ? tot / scope * 100 : 0;
+}
+// Per-file weight
+function fileWeight(f) {
+  const scope = viewMode === 'sonar' ? (f.excluded ? 0 : gSonStmt) : gAllStmt;
+  return scope > 0 ? f.total / scope * 100 : 0;
+}
+// Per-file contribution to total coverage score
+function fileContrib(f) {
+  const scope = viewMode === 'sonar' ? (f.excluded ? 0 : gSonStmt) : gAllStmt;
+  return scope > 0 ? f.covered / scope * 100 : 0;
+}
+// Format a contribution value — show enough decimal places for tiny contributions
+function fmtContrib(d) {
+  if (d <= 0)    return '0%';
+  if (d < 0.001) return d.toFixed(5) + '%';
+  if (d < 0.01)  return d.toFixed(4) + '%';
+  if (d < 0.1)   return d.toFixed(3) + '%';
+  if (d < 1)     return d.toFixed(2) + '%';
+  return d.toFixed(2) + '%';
+}
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function matchesFilter(pct) {
+  if (filter==='all') return true; if (filter==='red') return pct<50;
+  if (filter==='yellow') return pct>=50&&pct<80; if (filter==='green') return pct>=80; return true;
+}
+function effectivePct(p) {
+  if (viewMode !== 'sonar') return p.pct;
+  const fs = p.files.filter(f=>!f.excluded);
+  const c  = fs.reduce((s,f)=>s+f.covered,0), t = fs.reduce((s,f)=>s+f.total,0);
+  return t>0 ? c*100/t : 0;
+}
+function visiblePackages() {
+  return packages.filter(p => {
+    if (viewMode==='sonar' && p.excluded) return false;
+    return matchesFilter(effectivePct(p)) && (search==='' || p.pkg.toLowerCase().includes(search));
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+//  VIEW MODE
+// ─────────────────────────────────────────────────────────────
+function setViewMode(m) {
+  leaveSrcView();
+  viewMode = m;
+  document.getElementById('ds-all').classList.toggle('active',   m==='all');
+  document.getElementById('ds-sonar').classList.toggle('active', m==='sonar');
+  document.getElementById('sb-mode-all').classList.toggle('active',   m==='all');
+  document.getElementById('sb-mode-sonar').classList.toggle('active', m==='sonar');
+  selectedPkg = null; activeFile = null;
+  renderTree(); renderOverview(); renderWorkList();
+}
+
+// ─────────────────────────────────────────────────────────────
+//  TREE
+// ─────────────────────────────────────────────────────────────
+function buildTreeData(pkgList) {
+  const root = {};
+  pkgList.forEach(p => {
+    const parts = p.pkg.split('/'); let node = root;
+    parts.forEach((part, i) => {
+      if (!node[part]) node[part] = { _pkg:null, _children:{}, _cov:0, _tot:0, _excl:true };
+      const fs = viewMode==='sonar' ? p.files.filter(f=>!f.excluded) : p.files;
+      node[part]._cov += fs.reduce((s,f)=>s+f.covered,0);
+      node[part]._tot += fs.reduce((s,f)=>s+f.total,0);
+      if (!p.excluded) node[part]._excl = false;
+      if (i===parts.length-1) node[part]._pkg = p;
+      node = node[part]._children;
+    });
+  });
+  return root;
+}
+
+function renderTreeNodes(nm, depth, prefix) {
+  const scope = viewMode === 'sonar' ? gSonStmt : gAllStmt;
+  let html = '';
+  for (const key of Object.keys(nm).sort()) {
+    const node = nm[key], fp = prefix ? prefix+'/'+key : key;
+    const hasKids = !!Object.keys(node._children).length;
+    const isOpen  = openNodes.has(fp), isActive = node._pkg && selectedPkg===node._pkg.pkg;
+    const pct     = node._tot > 0 ? node._cov*100/node._tot : 0;
+    const color   = node._excl ? 'var(--text3)' : covColor(pct);
+    const pkgArg  = node._pkg ? `'${node._pkg.pkg.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}'` : 'null';
+
+    // Metric label: coverage % | score impact (+X%) | weight (ceiling %)
+    let metricLbl   = '—';
+    let metricColor = color;
+    if (!node._excl) {
+      if (treeMetric === 'contrib') {
+        // Score ↑ — how much overall coverage increases if this subtree is fully covered
+        const uncov = node._tot - node._cov;
+        const gain  = scope > 0 ? uncov / scope * 100 : 0;
+        const delta = fmtDelta(gain);
+        metricLbl   = delta || '<span style="font-size:10px;opacity:.6">✓</span>';
+        metricColor = delta ? 'var(--green)' : 'var(--text3)';
+      } else if (treeMetric === 'weight') {
+        // Weight — this subtree's share of the repo's 100% coverage ceiling
+        const w     = scope > 0 ? node._tot / scope * 100 : 0;
+        metricLbl   = fmtContrib(w);
+        metricColor = 'var(--accent)';
+      } else {
+        // Coverage — package-wise coverage %
+        metricLbl = fmtPct(pct);
+      }
+    }
+
+    html += `<div><div class="t-row${isActive?' active':''}${node._excl?' excluded':''}" style="padding-left:${6+depth*14}px"
+       onclick="onNodeClick('${fp.replace(/'/g,"\\'")}',${hasKids},${pkgArg})">
+      <div class="t-chevron${hasKids?(isOpen?' open':''):''}">
+        ${hasKids?`<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>`:''}
+      </div>
+      <div class="t-dot" style="background:${color}"></div>
+      <div class="t-label" title="${fp}">${key}</div>
+      ${node._excl&&viewMode==='all'?'<div class="t-excl-tag">excl</div>':''}
+      <div class="t-pct" style="color:${metricColor}">${metricLbl}</div>
+    </div>
+    ${hasKids?`<div class="t-children${isOpen?' open':''}">${renderTreeNodes(node._children,depth+1,fp)}</div>`:''}</div>`;
+  }
+  return html;
+}
+
+function setTreeMetric(m) {
+  treeMetric = m;
+  document.getElementById('tmt-cov').classList.toggle('active',    m === 'cov');
+  document.getElementById('tmt-contrib').classList.toggle('active', m === 'contrib');
+  document.getElementById('tmt-weight').classList.toggle('active',  m === 'weight');
+  renderTree();
+}
+
+function renderTree() { document.getElementById('tree').innerHTML = renderTreeNodes(buildTreeData(visiblePackages()),0,''); }
+
+function onNodeClick(fp, hasKids, pkgPath) {
+  if (hasKids) { if (openNodes.has(fp)) openNodes.delete(fp); else openNodes.add(fp); }
+  if (pkgPath) { leaveSrcView(); selectedPkg = pkgPath; activeFile = null; renderPkgDetail(pkgPath); }
+  renderTree();
+}
+
+// ─────────────────────────────────────────────────────────────
+//  OVERVIEW
+// ─────────────────────────────────────────────────────────────
+function setOverviewSort(s) {
+  overviewSort = s;
+  renderOverview();
+}
+
+function renderOverview() {
+  const byGain = overviewSort === 'gain';
+  const visible = visiblePackages().sort(byGain
+    ? (a,b) => pkgGain(b) - pkgGain(a)            // highest score impact first
+    : (a,b) => effectivePct(a) - effectivePct(b)   // lowest coverage first
+  );
+  const scopeLbl = viewMode === 'sonar' ? 'sonar score' : 'overall cov';
+
+  document.getElementById('main-head').innerHTML = `
+    <div class="title-row">
+      <div>
+        <div class="main-name">${viewMode==='sonar'?'SonarQube Packages':'All Packages'}</div>
+        <div class="main-meta">${visible.length} packages</div>
+      </div>
+      <div class="ov-sort">
+        <button class="ov-sort-btn${byGain?' active':''}" onclick="setOverviewSort('gain')">↓ Score impact</button>
+        <button class="ov-sort-btn${!byGain?' active':''}" onclick="setOverviewSort('pct')">↑ Coverage</button>
+      </div>
+    </div>`;
+
+  const cards = visible.map(p => {
+    const pct        = effectivePct(p);
+    const c          = p.excluded ? 'var(--text3)' : covColor(pct);
+    const gain       = pkgGain(p);
+    const delta      = fmtDelta(gain);
+    const isStarred  = workList.has(p.pkg);
+
+    const gainHtml = p.excluded
+      ? ''
+      : delta
+        ? `<div class="pc-gain" title="Covering all uncovered statements in this package would add ${delta} to ${scopeLbl}">
+             <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>
+             ${delta} if covered
+           </div>`
+        : `<div class="pc-gain pc-gain-zero">fully covered</div>`;
+
+    // Star button — stopPropagation so the card click (selectPkg) doesn't fire
+    const starBtn = p.excluded ? '' :
+      `<button class="pkg-sel-btn${isStarred?' starred':''}"
+         onclick="event.stopPropagation();toggleWorkList('${p.pkg.replace(/'/g,"\\'")}')"
+         title="${isStarred?'Remove from':'Add to'} Work List">
+         <svg width="13" height="13" viewBox="0 0 24 24"
+           fill="${isStarred?'currentColor':'none'}" stroke="currentColor" stroke-width="2">
+           <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+         </svg>
+       </button>`;
+
+    const contrib = pkgContrib(p);
+    const weight  = pkgWeight(p);
+    const covW    = weight > 0 ? contrib : 0;
+    const uncovW  = weight > 0 ? weight - covW : 0;
+    const weightBar = p.excluded ? '' : `
+      <div class="pc-weight" title="This package holds ${fmtContrib(weight)} of the repo's total statements (its coverage ceiling).&#10;Currently covered: ${fmtContrib(covW)} · Still uncovered: ${fmtContrib(uncovW)}">
+        <div class="pc-weight-bar">
+          <div class="pc-weight-cov"  style="width:${covW/weight*100}%;left:0"></div>
+          <div class="pc-weight-uncov" style="width:${uncovW/weight*100}%;left:${covW/weight*100}%"></div>
+        </div>
+        <span class="pc-weight-lbl" style="min-width:44px;text-align:right">${fmtContrib(weight)}</span>
+      </div>`;
+
+    return `<div class="pkg-card${p.excluded?' excl-card':''}${isStarred?' in-worklist':''}"
+      onclick="${p.excluded?'void 0':`selectPkg('${p.pkg.replace(/'/g,"\\'")}')`}">
+      ${starBtn}
+      <div class="pc-name" title="${p.pkg}" style="padding-right:${p.excluded?'0':'26px'}">${p.pkg}</div>
+      <div class="pc-meta">${p.files.length} file${p.files.length!==1?'s':''} · ${fmt(p.covered)}/${fmt(p.total)} stmts
+        ${p.excluded?'<span class="pc-excl">sonar excl</span>':''}
+      </div>
+      <div class="pc-bar"><div class="pc-bar-fill" style="width:${pct}%;background:${c}"></div></div>
+      ${weightBar}
+      <div class="pc-bottom" style="margin-top:8px">
+        <div class="pc-pct" style="color:${c}">${p.excluded?'—':fmtPct(pct)}</div>
+        ${gainHtml}
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('main-content').innerHTML = `<div class="ov-wrap fade">
+    <div class="ov-grid">${cards||'<div class="empty"><h3>No packages match</h3></div>'}</div></div>`;
+}
+
+function selectPkg(pkgPath) {
+  leaveSrcView();
+  selectedPkg = pkgPath; activeFile = null;
+  renderPkgDetail(pkgPath);
+  const parts = pkgPath.split('/'); let acc='';
+  parts.forEach(p => { acc=acc?acc+'/'+p:p; openNodes.add(acc); });
+  renderTree();
+}
+
+// ─────────────────────────────────────────────────────────────
+//  PACKAGE DETAIL
+// ─────────────────────────────────────────────────────────────
+function renderPkgDetail(pkgPath) {
+  const pkg = packages.find(p => p.pkg===pkgPath); if (!pkg) return;
+  activeFile = null;
+  let files = [...pkg.files];
+  if (viewMode==='sonar') files = files.filter(f=>!f.excluded);
+  const sonCov = files.reduce((s,f)=>s+f.covered,0), sonTot = files.reduce((s,f)=>s+f.total,0);
+  const pct    = viewMode==='sonar' ? (sonTot>0?sonCov*100/sonTot:0) : pkg.pct;
+  const c      = covColor(pct);
+  const parts  = pkgPath.split('/');
+  const exclCnt= pkg.files.filter(f=>f.excluded).length;
+  document.getElementById('main-head').innerHTML = `
+    <div class="main-crumb">${modulePrefix?modulePrefix+'/':''}<span>${pkgPath}</span></div>
+    <div class="title-row">
+      <div><div class="main-name">${parts[parts.length-1]}</div>
+      <div class="main-meta">
+        ${fmt(viewMode==='sonar'?sonCov:pkg.covered)} / ${fmt(viewMode==='sonar'?sonTot:pkg.total)} stmts covered
+        ${exclCnt>0?`<span class="excl-banner"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>${exclCnt} file${exclCnt!==1?'s':''} excl from Sonar</span>`:''}
+      </div></div>
+      <div class="main-pct" style="color:${c}">${fmtPct(pct)}</div>
+    </div>
+    <div class="bar-wrap"><div class="bar-fill" style="width:${pct}%;background:${c}"></div></div>`;
+  renderFileTable(pkg);
+}
+
+function renderFileTable(pkg) {
+  let files = [...pkg.files];
+  if (viewMode==='sonar') files = files.filter(f=>!f.excluded);
+
+  // For 'gain' sort key, resolve to the mode-appropriate field
+  files.sort((a,b) => {
+    const key = sortCol === 'gain' ? (viewMode === 'sonar' ? 'gainSonar' : 'gainAll') : sortCol;
+    let va=a[key], vb=b[key];
+    if (typeof va==='string'){va=va.toLowerCase();vb=vb.toLowerCase();}
+    if(va===vb)return 0; return(sortDir==='asc'?va>vb:va<vb)?1:-1;
+  });
+
+  const thCls = col => sortCol===col?(sortDir==='asc'?'asc':'desc'):'';
+  const scopeLbl = viewMode === 'sonar' ? 'sonar score' : 'overall';
+
+  const rows = files.map(f => {
+    const c     = covColor(f.pct);
+    const gain  = fileGain(f);
+    const delta = fmtDelta(gain);
+    const deltaCell = f.excluded
+      ? `<span style="font-size:12px;color:var(--text3);font-style:italic">not counted by Sonar</span>`
+      : delta
+        ? `<span class="delta-chip"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>${delta}</span>`
+        : `<span class="delta-chip delta-zero">fully covered</span>`;
+
+    const fw      = fileWeight(f);
+    const fc      = fileContrib(f);
+    const fUncovW = fw - fc;
+    const weightCell = f.excluded
+      ? `<span style="font-size:12px;color:var(--text3);font-style:italic">—</span>`
+      : `<div style="display:flex;align-items:center;gap:6px"
+           title="This file holds ${fmtContrib(fw)} of the repo's total statements.&#10;Covered: ${fmtContrib(fc)} · Uncovered: ${fmtContrib(fUncovW)}">
+           <div style="flex:1;height:5px;border-radius:3px;background:var(--bg4);overflow:hidden;position:relative;min-width:50px">
+             <div style="position:absolute;left:0;top:0;height:100%;width:${fw>0?fc/fw*100:0}%;background:var(--green)"></div>
+             <div style="position:absolute;top:0;height:100%;left:${fw>0?fc/fw*100:0}%;width:${fw>0?fUncovW/fw*100:0}%;background:rgba(248,81,73,.45)"></div>
+           </div>
+           <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--accent);white-space:nowrap">${fmtContrib(fw)}</span>
+         </div>`;
+
+    return `<tr class="${f.excluded?'excl-row':''}" onclick="openSourceView('${f.path.replace(/'/g,"\\'")}','${pkg.pkg.replace(/'/g,"\\'")}')">
+      <td><div class="f-name">${f.name}${f.excluded?'<span class="f-excl">sonar excl</span>':''}</div><div class="f-path">${f.path}</div></td>
+      <td class="num">${fmt(f.total)}</td>
+      <td class="num" style="color:${c}">${fmt(f.covered)}</td>
+      <td>${f.excluded
+        ? `<span style="font-size:12px;color:var(--text3);font-style:italic">not counted by Sonar</span>`
+        : `<div class="cbar"><div class="cbar-track"><div class="cbar-fill" style="width:${f.pct}%;background:${c}"></div></div><span class="cbar-pct" style="color:${c}">${fmtPct(f.pct)}</span></div>`
+      }</td>
+      <td style="min-width:110px">${weightCell}</td>
+      <td style="text-align:right">${deltaCell}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('main-content').innerHTML = `<div class="tbl-wrap fade">
+    <table class="ftable"><thead><tr>
+      <th class="${thCls('name')}"    onclick="onSort('name')">File</th>
+      <th class="${thCls('total')}"   onclick="onSort('total')"   style="text-align:right;width:80px">Stmts</th>
+      <th class="${thCls('covered')}" onclick="onSort('covered')" style="text-align:right;width:80px">Covered</th>
+      <th class="${thCls('pct')}"     onclick="onSort('pct')"     style="width:160px">Coverage</th>
+      <th style="width:130px" title="This file's share of the repo's total statements — its ceiling contribution to 100% coverage. Green = covered, red = uncovered.">Weight</th>
+      <th class="${thCls('gain')}"    onclick="onSort('gain')"    style="text-align:right;width:130px" title="How much the ${scopeLbl} coverage would increase if every uncovered statement in this file were covered">Score impact ↑</th>
+    </tr></thead>
+    <tbody>${rows||'<tr><td colspan="6"><div class="empty" style="padding:28px"><h3>No files</h3></div></td></tr>'}</tbody>
+    </table></div>`;
+}
+
+function onSort(col) {
+  // Default sort direction: gain/coverage sorts descending (highest impact first)
+  const defaultDir = (col === 'gain' || col === 'pct' || col === 'covered' || col === 'total') ? 'desc' : 'asc';
+  sortDir = sortCol===col ? (sortDir==='asc'?'desc':'asc') : defaultDir;
+  sortCol = col;
+  if (selectedPkg) renderFileTable(packages.find(p=>p.pkg===selectedPkg));
+}
+
+// ─────────────────────────────────────────────────────────────
+//  SOURCE VIEW
+// ─────────────────────────────────────────────────────────────
+async function openSourceView(filePath, pkgPath) {
+  const pkg  = packages.find(p => p.pkg===pkgPath);
+  const file = pkg && pkg.files.find(f => f.path===filePath);
+  if (!file) return;
+
+  activeFile = filePath;
+
+  // Update header to source-view mode
+  const c        = covColor(file.pct);
+  const parts    = pkgPath.split('/');
+  const hasUncov = file.blocks.some(b => !b.covered);
+  const gain     = fileGain(file);
+  const delta    = fmtDelta(gain);
+  const scopeLbl = viewMode === 'sonar' ? 'sonar score' : 'overall cov';
+  const uncovStmts = file.total - file.covered;
+
+  // Delta block shown in header
+  const deltaHtml = file.excluded
+    ? ''
+    : delta
+      ? `<div class="src-delta" title="Covering ${fmt(uncovStmts)} uncovered stmt${uncovStmts!==1?'s':''} in this file would add ${delta} to ${scopeLbl}">
+           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>
+           <div>
+             <div class="src-delta-val">${delta}</div>
+             <div class="src-delta-lbl">to ${scopeLbl}<br>if fully covered</div>
+           </div>
+         </div>`
+      : `<div class="src-delta fully-covered" title="All statements in this file are already covered">
+           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+           <div>
+             <div class="src-delta-val" style="font-size:12px">fully covered</div>
+             <div class="src-delta-lbl">no uncovered stmts</div>
+           </div>
+         </div>`;
+
+  document.getElementById('main-head').innerHTML = `
+    <div class="src-head-row">
+      <button class="back-btn" onclick="backToPackage('${pkgPath.replace(/'/g,"\\'")}')">
+        ← ${parts[parts.length-1]}
+      </button>
+      <div class="vsep" style="height:20px;flex-shrink:0"></div>
+      <div style="min-width:0">
+        <div class="src-file-name">${file.name}${file.excluded?'&nbsp;<span class="f-excl">sonar excl</span>':''}</div>
+        <div class="src-file-path">${file.path}</div>
+      </div>
+      <div class="src-pct" style="color:${c}">${fmtPct(file.pct)}</div>
+      <div class="src-stmts">${fmt(file.covered)} / ${fmt(file.total)} stmts</div>
+      ${deltaHtml}
+    </div>
+    <div class="src-head-row">
+      <div class="src-leg">
+        <span class="src-leg-item"><span class="src-leg-dot" style="background:rgba(63,185,80,.5);outline:1px solid var(--green)"></span>Covered</span>
+        <span class="src-leg-item"><span class="src-leg-dot" style="background:rgba(248,81,73,.55);outline:1px solid var(--red)"></span>Uncovered</span>
+        <span class="src-leg-item"><span class="src-leg-dot" style="background:var(--bg4);outline:1px solid var(--border)"></span>Not executable</span>
+      </div>
+      <div class="src-jump">
+        <button class="jump-btn" id="jump-prev" onclick="jumpUncovered(-1)" ${!hasUncov?'disabled':''}>↑ Prev</button>
+        <button class="jump-btn" id="jump-next" onclick="jumpUncovered(1)"  ${!hasUncov?'disabled':''}>↓ Next uncovered</button>
+      </div>
+    </div>`;
+
+  // Switch main-body to side-by-side layout and inject the panel
+  const mb = document.getElementById('main-body');
+  mb.classList.add('src-layout');
+  if (!document.getElementById('src-panel')) {
+    const panel = document.createElement('div');
+    panel.id        = 'src-panel';
+    panel.className = 'src-panel';
+    mb.appendChild(panel);
+  }
+
+  // Show loading state
+  document.getElementById('main-content').innerHTML =
+    `<div class="src-unavail"><p style="color:var(--text3);font-family:'JetBrains Mono',monospace;font-size:13px">Loading source…</p></div>`;
+  document.getElementById('main-content').scrollTop = 0;
+
+  // Fast path: source was inlined by the CLI script
+  if (window.__SOURCE_FILES__ && window.__SOURCE_FILES__[filePath] !== undefined) {
+    renderSourceCode(window.__SOURCE_FILES__[filePath], file);
+    return;
+  }
+  try {
+    const url  = repoBasePath + filePath;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const source = await resp.text();
+    renderSourceCode(source, file);
+  } catch (e) {
+    renderSourceUnavailable(file, filePath);
+  }
+}
+
+function renderSourceCode(sourceText, file) {
+  const sourceLines = sourceText.split('\n');
+
+  // Build line-state map: covered takes priority over uncovered if a line is in both
+  const lineState = {};
+  for (const block of file.blocks) {
+    const sl = Math.max(1, block.startLine);
+    const el = Math.min(block.endLine, sourceLines.length);
+    for (let ln = sl; ln <= el; ln++) {
+      if (block.covered) {
+        lineState[ln] = 'covered';
+      } else if (lineState[ln] !== 'covered') {
+        lineState[ln] = 'uncovered';
+      }
+    }
+  }
+
+  // Collect uncovered line numbers for jump navigation
+  _uncovLines = Object.keys(lineState)
+    .filter(ln => lineState[ln] === 'uncovered')
+    .map(Number)
+    .sort((a,b) => a-b);
+  _uncovIdx = -1;
+
+  // Render all lines
+  const html = sourceLines.map((line, i) => {
+    const ln    = i + 1;
+    const state = lineState[ln] || 'none';
+    const cls   = state === 'none' ? '' : ` src-${state}`;
+    return `<div class="src-line${cls}" data-ln="${ln}"><div class="src-gutter">${ln}</div><div class="src-content">${escHtml(line) || ' '}</div></div>`;
+  }).join('');
+
+  document.getElementById('main-content').innerHTML =
+    `<div class="src-code-wrap fade">${html}</div>`;
+
+  renderSrcPanel(file);
+
+  // Auto-scroll to first uncovered line
+  if (_uncovLines.length > 0) {
+    requestAnimationFrame(() => jumpUncovered(1));
+  }
+}
+
+function renderSourceUnavailable(file, filePath) {
+  const tried = repoBasePath + (filePath || '');
+  document.getElementById('main-content').innerHTML = `
+    <div class="src-unavail fade">
+      <h3>Source not available</h3>
+      <p>Could not load: <code>${tried}</code><br><br>
+      Coverage blocks are still available in the panel →</p>
+      <div class="src-retry-form">
+        <label>Set repo base path and retry</label>
+        <div class="src-retry-row">
+          <input id="src-retry-input" type="text" value="${repoBasePath}"
+            placeholder="e.g. ./ or http://localhost:8080/"
+            onkeydown="if(event.key==='Enter')retryWithBase('${(filePath||'').replace(/'/g,"\\'")}')"/>
+          <button onclick="retryWithBase('${(filePath||'').replace(/'/g,"\\'")}')">Retry</button>
+        </div>
+      </div>
+      <div class="repo-cfg-hint" style="margin-top:14px">
+        Run from repo root: <code>python3 -m http.server 8080</code><br>
+        then open <code>http://localhost:8080/coverage.html</code>
+      </div>
+    </div>`;
+  renderSrcPanel(file);
+}
+
+// Renders the right-side block-list panel (shared by source + unavailable views)
+function renderSrcPanel(file) {
+  const panel = document.getElementById('src-panel');
+  if (!panel) return;
+
+  const uncov     = file.blocks.filter(b => !b.covered).sort((a,b) => a.startLine - b.startLine);
+  const cov       = file.blocks.filter(b =>  b.covered).sort((a,b) => a.startLine - b.startLine);
+  const uncovStmt = uncov.reduce((s,b) => s + b.stmts, 0);
+  const covStmt   = cov.reduce((s,b)   => s + b.stmts, 0);
+
+  const blockItem = (b, type) => {
+    const lbl = b.startLine === b.endLine
+      ? `L${b.startLine}`
+      : `L${b.startLine}–${b.endLine}`;
+    return `<div class="sp-block sp-${type}" onclick="scrollToLine(${b.startLine})" title="Jump to ${lbl}">
+      <span class="sp-range">${lbl}</span>
+      <span class="sp-stmts">${b.stmts} stmt${b.stmts!==1?'s':''}</span>
+    </div>`;
+  };
+
+  const uncovHtml = uncov.length
+    ? uncov.map(b => blockItem(b, 'uncov')).join('')
+    : `<div class="sp-all-cov">✓ All covered</div>`;
+
+  panel.innerHTML = `
+    <div class="sp-section">
+      <div class="sp-section-hd" style="color:var(--red)">
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        Uncovered
+        <span class="sp-count">${uncov.length} block${uncov.length!==1?'s':''} · ${uncovStmt} stmt${uncovStmt!==1?'s':''}</span>
+      </div>
+      ${uncovHtml}
+    </div>
+    <div class="sp-section">
+      <div class="sp-section-hd collapsible" style="color:var(--green)" onclick="toggleSpCov(this)">
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+        Covered
+        <span class="sp-count">${cov.length} block${cov.length!==1?'s':''} · ${covStmt} stmt${covStmt!==1?'s':''}</span>
+        <svg class="sp-chevron" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div id="sp-cov-list" style="display:none">${cov.map(b => blockItem(b, 'cov')).join('')}</div>
+    </div>`;
+}
+
+function toggleSpCov(el) {
+  const list = document.getElementById('sp-cov-list');
+  const chev = el.querySelector('.sp-chevron');
+  if (!list) return;
+  const open = list.style.display !== 'none';
+  list.style.display = open ? 'none' : 'block';
+  if (chev) chev.classList.toggle('open', !open);
+}
+
+// Scroll the source code pane to the given line number
+function scrollToLine(ln) {
+  const el = document.querySelector(`.src-line[data-ln="${ln}"]`);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// Tear down the source-view layout (panel + layout class). Safe to call anytime.
+function leaveSrcView() {
+  activeFile = null;
+  _uncovLines = []; _uncovIdx = -1;
+  const mb = document.getElementById('main-body');
+  if (mb) mb.classList.remove('src-layout');
+  const panel = document.getElementById('src-panel');
+  if (panel) panel.remove();
+}
+
+function backToPackage(pkgPath) {
+  leaveSrcView();
+  renderPkgDetail(pkgPath);
+  renderTree();
+}
+
+// Jump to prev/next uncovered line in the source view
+function jumpUncovered(dir) {
+  if (!_uncovLines.length) return;
+  if (_uncovIdx === -1 && dir === 1) {
+    _uncovIdx = 0;
+  } else {
+    _uncovIdx = (_uncovIdx + dir + _uncovLines.length) % _uncovLines.length;
+  }
+  scrollToLine(_uncovLines[_uncovIdx]);
+}
+
+// ─────────────────────────────────────────────────────────────
+//  WORK LIST
+// ─────────────────────────────────────────────────────────────
+function loadWorkList() {
+  try { workList = new Set(JSON.parse(localStorage.getItem(WB_KEY) || '[]')); }
+  catch { workList = new Set(); }
+}
+function saveWorkList() {
+  localStorage.setItem(WB_KEY, JSON.stringify([...workList]));
+}
+
+function toggleWorkList(pkgPath) {
+  if (workList.has(pkgPath)) workList.delete(pkgPath);
+  else workList.add(pkgPath);
+  saveWorkList();
+  renderWorkList();
+  // Refresh overview cards so star state and border update immediately
+  if (!selectedPkg && !activeFile) renderOverview();
+}
+
+function clearWorkList() {
+  workList.clear();
+  saveWorkList();
+  renderWorkList();
+  if (!selectedPkg && !activeFile) renderOverview();
+}
+
+function toggleWbOpen() {
+  wbOpen = !wbOpen;
+  document.getElementById('wb-body').style.display    = wbOpen ? '' : 'none';
+  document.getElementById('wb-chevron').classList.toggle('open', wbOpen);
+}
+
+function renderWorkList() {
+  const badge = document.getElementById('wb-badge');
+  if (!badge) return;
+
+  // Resolve stored paths to live package objects (silently drop stale entries)
+  const activePkgs = [...workList]
+    .map(path => packages.find(p => p.pkg === path))
+    .filter(Boolean);
+
+  badge.textContent = activePkgs.length;
+  badge.classList.toggle('empty', activePkgs.length === 0);
+
+  const body = document.getElementById('wb-body');
+  if (!body) return;
+  body.style.display = wbOpen ? '' : 'none';
+  if (!wbOpen) return;
+
+  if (!activePkgs.length) {
+    body.innerHTML = `<div class="wb-empty">★ Star packages on the<br>overview to track them here</div>`;
+    return;
+  }
+
+  // Combined impact = sum of each package's gain under the current view scope
+  // Mathematically: Σ(pkg_uncovered / scope_total) × 100 = total_uncovered_in_selection / scope_total × 100
+  const combined  = activePkgs.reduce((s, p) => s + pkgGain(p), 0);
+  const deltaStr  = fmtDelta(combined) || '+0.00%';
+  const scopeLbl  = viewMode === 'sonar' ? 'sonar score' : 'overall cov';
+  const totalUncov = activePkgs.reduce((s, p) => {
+    const fs = viewMode === 'sonar' ? p.files.filter(f => !f.excluded) : p.files;
+    return s + fs.reduce((ss, f) => ss + (f.total - f.covered), 0);
+  }, 0);
+
+  const items = activePkgs.map(p => {
+    const gain  = pkgGain(p);
+    const delta = fmtDelta(gain) || '—';
+    const pct   = effectivePct(p);
+    const c     = covColor(pct);
+    const short = p.pkg.split('/').slice(-2).join('/'); // last 2 segments for readability
+    return `<div class="wb-item" onclick="selectPkg('${p.pkg.replace(/'/g,"\\'")}')">
+      <div class="wb-item-dot" style="background:${c}"></div>
+      <div class="wb-item-name" title="${p.pkg}">${short}</div>
+      <div class="wb-item-gain">${delta}</div>
+      <div class="wb-item-rm" onclick="event.stopPropagation();toggleWorkList('${p.pkg.replace(/'/g,"\\'")}')">✕</div>
+    </div>`;
+  }).join('');
+
+  body.innerHTML = `
+    <div class="wb-impact" title="If every uncovered statement across these ${activePkgs.length} package${activePkgs.length!==1?'s':''} (${fmt(totalUncov)} stmts) were covered">
+      <div class="wb-impact-val">${deltaStr}</div>
+      <div class="wb-impact-lbl">combined impact on ${scopeLbl}<br>if all ${activePkgs.length} package${activePkgs.length!==1?'s':''} fully covered</div>
+    </div>
+    ${items}
+    <button class="wb-clear" onclick="clearWorkList()">✕ Clear all</button>`;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  FILTER / SEARCH
+// ─────────────────────────────────────────────────────────────
+function setFilter(f, btn) {
+  leaveSrcView();
+  filter = f;
+  document.querySelectorAll('.flt').forEach(b => b.classList.remove('active')); btn.classList.add('active');
+  selectedPkg = null; activeFile = null; renderTree(); renderOverview();
+}
+function onSearch(val) {
+  search = val.toLowerCase().trim(); renderTree();
+  if (!selectedPkg) { leaveSrcView(); renderOverview(); }
+}
+</script>
+</body>
+</html>
